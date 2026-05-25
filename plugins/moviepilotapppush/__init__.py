@@ -50,7 +50,8 @@ class MoviePilotAppPush(_PluginBase):
     plugin_desc = "为 MoviePilot iOS / macOS App 提供 APNs 远程推送"
     plugin_version = "1.0.0"
     plugin_author = "MoviePilotApp"
-    plugin_icon = "mdi-cellphone-message"
+    # 与 package.v2.json 的 icon 一致；独立仓库须用 raw.githubusercontent.com 完整 URL
+    plugin_icon = "https://raw.githubusercontent.com/buzhengg/MoviePilotAppPush/main/icons/moviepilotapppush.png"
     plugin_order = 120
 
     def __init__(self):

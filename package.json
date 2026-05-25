@@ -4,7 +4,7 @@
     "description": "为 MoviePilot iOS / macOS App 提供 APNs 远程推送，支持设备 token 注册与系统通知转发。",
     "labels": "通知,App",
     "version": "1.0.0",
-    "icon": "moviepilotapppush.png",
+    "icon": "https://raw.githubusercontent.com/buzhengg/MoviePilotAppPush/main/icons/moviepilotapppush.png",
     "author": "MoviePilotApp",
     "level": 1,
     "v2": true,
