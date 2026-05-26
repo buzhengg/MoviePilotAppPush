@@ -73,10 +73,20 @@ PLUGIN_LOCAL_REPO_PATHS=/path/to/MoviePilotAppPush
 ./scripts/sync-plugin.sh
 ```
 
+## 插件详情页（v1.1.0+）
+
+安装并启用后，在 **插件 → MoviePilot App 推送 → 详情** 可：
+
+- 查看 **已注册用户数 / 设备数** 与 APNs 配置状态
+- 表格展示 **用户名、平台、Bundle ID、完整 device token、更新时间**
+- **单设备测试推送** 或 **向全部设备发送测试推送**
+- 页面顶部显示最近一次测试结果
+
 ## App API
 
-| 方法 | 路径 |
-|------|------|
-| POST | `/api/v1/plugin/MoviePilotAppPush/register` |
-| DELETE | `/api/v1/plugin/MoviePilotAppPush/unregister` |
-| GET | `/api/v1/plugin/MoviePilotAppPush/devices` |
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/plugin/MoviePilotAppPush/register` | App 登录后注册 token |
+| DELETE | `/api/v1/plugin/MoviePilotAppPush/unregister` | App 登出注销 token |
+| GET | `/api/v1/plugin/MoviePilotAppPush/devices` | 当前用户已注册设备（脱敏） |
+| GET/POST | `/api/v1/plugin/MoviePilotAppPush/test_push` | 测试推送（需 `apikey`） |
