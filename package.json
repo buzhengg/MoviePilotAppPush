@@ -3,12 +3,13 @@
     "name": "MoviePilot App 推送",
     "description": "为 MoviePilot iOS / macOS App 提供 APNs 远程推送，支持设备 token 注册与系统通知转发。",
     "labels": "通知,App",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "icon": "https://raw.githubusercontent.com/buzhengg/MoviePilotAppPush/main/icons/moviepilotapppush.png",
     "author": "buzhengg",
     "level": 1,
     "v2": true,
     "history": {
+      "v1.1.1": "修复详情页测试推送：改用管理员 Bearer 鉴权与 POST 调用",
       "v1.1.0": "插件详情页：展示已注册用户名与 device token，支持测试推送",
       "v1.0.0": "初始版本：APNs 推送、设备注册 API"
     }

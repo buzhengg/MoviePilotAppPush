@@ -17,12 +17,11 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import Body, Depends
+from fastapi import Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import schemas
-from app.core.config import settings
 from app.db import get_async_db
 from app.db.models import User
 from app.db.user_oper import get_current_active_user_async
@@ -50,18 +49,10 @@ class DeviceUnregisterRequest(BaseModel):
     device_token: str = Field(..., min_length=1)
 
 
-class TestPushRequest(BaseModel):
-    username: Optional[str] = Field(default=None, description="仅推送给该用户；留空则按 device_token 或全部设备")
-    device_token: Optional[str] = Field(default=None, description="仅推送给指定 token")
-    title: str = Field(default=DEFAULT_TEST_TITLE)
-    message: str = Field(default=DEFAULT_TEST_BODY, description="通知正文")
-    link: Optional[str] = Field(default=None, description="通知附带链接（可选）")
-
-
 class MoviePilotAppPush(_PluginBase):
     plugin_name = "MoviePilot App 推送"
     plugin_desc = "为 MoviePilot iOS / macOS App 提供 APNs 远程推送"
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     plugin_author = "MoviePilotApp"
     # 与 package.v2.json 的 icon 一致；独立仓库须用 raw.githubusercontent.com 完整 URL
     plugin_icon = "https://raw.githubusercontent.com/buzhengg/MoviePilotAppPush/main/icons/moviepilotapppush.png"
@@ -265,8 +256,9 @@ class MoviePilotAppPush(_PluginBase):
                 "path": "/test_push",
                 "endpoint": self.test_push,
                 "methods": ["GET", "POST"],
+                "auth": "bear",
                 "summary": "发送测试推送（插件详情页）",
-                "description": "管理员在插件详情页测试 APNs；GET 供页面按钮调用，POST 可提交 JSON。",
+                "description": "管理员登录态（Bearer）调用；与订阅通知走同一 APNs 通道。",
             },
         ]
 
@@ -352,25 +344,39 @@ class MoviePilotAppPush(_PluginBase):
 
     async def test_push(
             self,
-            apikey: str = "",
             username: Optional[str] = None,
             device_token: Optional[str] = None,
             title: str = DEFAULT_TEST_TITLE,
             message: str = DEFAULT_TEST_BODY,
             link: Optional[str] = None,
-            payload: Optional[TestPushRequest] = Body(None),
+            current_user: User = Depends(get_current_active_superuser_async),
+            db: AsyncSession = Depends(get_async_db),
     ) -> schemas.Response:
-        """插件详情页：发送测试 APNs（需 API_TOKEN）。"""
-        if payload:
-            username = payload.username if payload.username is not None else username
-            device_token = payload.device_token if payload.device_token is not None else device_token
-            title = payload.title or title
-            message = payload.message or message
-            link = payload.link if payload.link is not None else link
+        """插件详情页：发送测试 APNs（管理员 Bearer 鉴权）。"""
+        _ = db
+        logger.info(
+            "App 推送：管理员 %s 触发测试推送 user=%s token=%s",
+            current_user.name,
+            username or "*",
+            (device_token[:12] + "...") if device_token else "*",
+        )
+        return self._execute_test_push(
+            username=username,
+            device_token=device_token,
+            title=title,
+            message=message,
+            link=link,
+        )
 
-        if apikey != settings.API_TOKEN:
-            return schemas.Response(success=False, message="API密钥错误")
-
+    def _execute_test_push(
+            self,
+            *,
+            username: Optional[str],
+            device_token: Optional[str],
+            title: str,
+            message: str,
+            link: Optional[str],
+    ) -> schemas.Response:
         if not self._apns_ready():
             return schemas.Response(
                 success=False,
@@ -397,16 +403,19 @@ class MoviePilotAppPush(_PluginBase):
                 title=push_title,
                 body=push_body,
                 link=link,
-                mtype="test",
+                mtype=None,
             )
             if result.success:
                 sent += 1
+                logger.info("App 推送：测试成功 user=%s token=%s...", uname, token[:12])
             else:
+                reason = result.reason or f"HTTP {result.status_code}"
                 failed.append({
                     "username": uname,
                     "device_token": token,
-                    "reason": result.reason or f"HTTP {result.status_code}",
+                    "reason": reason,
                 })
+                logger.warning("App 推送：测试失败 user=%s reason=%s", uname, reason)
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         summary = f"已向 {sent}/{len(targets)} 个设备发送测试推送"
@@ -585,7 +594,8 @@ class MoviePilotAppPush(_PluginBase):
             title: str = "",
             message: str = "",
     ) -> dict:
-        params: Dict[str, Any] = {"apikey": settings.API_TOKEN}
+        """详情页按钮：使用 POST + 管理员 Bearer（勿用 apikey，Web 登录态不传 apikey）。"""
+        params: Dict[str, Any] = {}
         if username:
             params["username"] = username
         if device_token:
@@ -596,106 +606,152 @@ class MoviePilotAppPush(_PluginBase):
             params["message"] = message
         return {
             "api": f"plugin/{PLUGIN_ID}/test_push",
-            "method": "get",
+            "method": "post",
             "params": params,
+        }
+
+    @staticmethod
+    def _wrap_detail_page(sections: List[dict]) -> List[dict]:
+        return [{
+            "component": "div",
+            "props": {"class": "d-flex flex-column gap-4 pa-2"},
+            "content": sections,
+        }]
+
+    @staticmethod
+    def _detail_stat_card(value: str, label: str) -> dict:
+        return {
+            "component": "VCard",
+            "props": {"variant": "tonal", "class": "h-100"},
+            "content": [{
+                "component": "VCardText",
+                "props": {"class": "py-5 px-4"},
+                "content": [
+                    {
+                        "component": "div",
+                        "props": {"class": "text-h5 font-weight-bold"},
+                        "text": value,
+                    },
+                    {
+                        "component": "div",
+                        "props": {"class": "text-caption text-medium-emphasis mt-2"},
+                        "text": label,
+                    },
+                ],
+            }],
         }
 
     def _build_detail_page(self) -> List[dict]:
         registry = self._load_registry()
-        apns_status = self._detail_apns_status_text()
         last_test = self.get_data(LAST_TEST_PUSH_KEY) or {}
 
-        page: List[dict] = [
-            {
-                "component": "VAlert",
-                "props": {
-                    "type": "success" if self._apns_ready() else "warning",
-                    "variant": "tonal",
-                    "text": apns_status,
-                },
+        status_alerts: List[dict] = [{
+            "component": "VAlert",
+            "props": {
+                "type": "success" if self._apns_ready() else "warning",
+                "variant": "tonal",
+                "density": "comfortable",
+                "text": self._detail_apns_status_text(),
             },
-        ]
+        }]
 
         if last_test:
-            failed_count = len(last_test.get("failed") or [])
+            failed_list = last_test.get("failed") or []
+            failed_count = len(failed_list)
+            sent = int(last_test.get("sent") or 0)
+            total = int(last_test.get("total") or 0)
             last_msg = (
                 f"最近测试：{last_test.get('time', '—')}，"
-                f"成功 {last_test.get('sent', 0)}/{last_test.get('total', 0)}"
+                f"成功 {sent}/{total}"
             )
             if failed_count:
                 last_msg += f"，失败 {failed_count} 个"
-            page.append({
+                first_reason = (failed_list[0] or {}).get("reason")
+                if first_reason:
+                    last_msg += f"。原因：{first_reason}"
+            alert_type = "error" if total > 0 and sent == 0 else "info"
+            status_alerts.append({
                 "component": "VAlert",
                 "props": {
-                    "type": "info",
+                    "type": alert_type,
                     "variant": "tonal",
+                    "density": "comfortable",
                     "text": last_msg,
                 },
             })
 
+        sections: List[dict] = [{
+            "component": "div",
+            "props": {"class": "d-flex flex-column gap-3"},
+            "content": status_alerts,
+        }]
+
         if not registry:
-            page.append({
-                "component": "div",
-                "text": "暂无已注册设备。请使用 MoviePilot App 登录并允许通知权限。",
-                "props": {"class": "text-center text-medium-emphasis py-6"},
+            sections.append({
+                "component": "VCard",
+                "props": {"variant": "outlined"},
+                "content": [{
+                    "component": "VCardText",
+                    "props": {"class": "text-center text-medium-emphasis py-10 px-6"},
+                    "text": "暂无已注册设备。请使用 MoviePilot App 登录并允许通知权限。",
+                }],
             })
-            return page
+            return self._wrap_detail_page(sections)
 
         total_users = len(registry)
         total_devices = sum(len(devices) for devices in registry.values())
-        page.append({
+
+        sections.append({
             "component": "VRow",
+            "props": {"dense": True},
             "content": [
                 {
                     "component": "VCol",
-                    "props": {"cols": 12, "md": 4},
-                    "content": [{
-                        "component": "VCard",
-                        "props": {"variant": "tonal"},
-                        "content": [
-                            {"component": "VCardTitle", "text": str(total_users)},
-                            {"component": "VCardSubtitle", "text": "已注册用户"},
-                        ],
-                    }],
+                    "props": {"cols": 12, "sm": 6, "md": 4, "class": "pb-2 pb-md-0"},
+                    "content": [self._detail_stat_card(str(total_users), "已注册用户")],
+                },
+                {
+                    "component": "VCol",
+                    "props": {"cols": 12, "sm": 6, "md": 4, "class": "pb-2 pb-md-0"},
+                    "content": [self._detail_stat_card(str(total_devices), "已注册设备")],
                 },
                 {
                     "component": "VCol",
                     "props": {"cols": 12, "md": 4},
                     "content": [{
                         "component": "VCard",
-                        "props": {"variant": "tonal"},
-                        "content": [
-                            {"component": "VCardTitle", "text": str(total_devices)},
-                            {"component": "VCardSubtitle", "text": "已注册设备"},
-                        ],
-                    }],
-                },
-                {
-                    "component": "VCol",
-                    "props": {"cols": 12, "md": 4},
-                    "content": [{
-                        "component": "VBtn",
-                        "props": {
-                            "color": "primary",
-                            "block": True,
-                            "prependIcon": "mdi-bell-ring",
-                        },
-                        "text": "向全部设备发送测试推送",
-                        "events": {
-                            "click": self._page_test_push_event(),
-                        },
+                        "props": {"variant": "outlined", "class": "h-100"},
+                        "content": [{
+                            "component": "VCardText",
+                            "props": {
+                                "class": "d-flex align-center justify-center py-5 px-4",
+                            },
+                            "content": [{
+                                "component": "VBtn",
+                                "props": {
+                                    "color": "primary",
+                                    "block": True,
+                                    "size": "large",
+                                    "prependIcon": "mdi-bell-ring",
+                                },
+                                "text": "向全部设备发送测试推送",
+                                "events": {
+                                    "click": self._page_test_push_event(),
+                                },
+                            }],
+                        }],
                     }],
                 },
             ],
         })
 
         table_headers = [
-            {"text": "用户名", "class": "text-start"},
+            {"text": "用户名", "class": "text-start ps-4"},
             {"text": "平台", "class": "text-start"},
             {"text": "Bundle ID", "class": "text-start"},
             {"text": "Device Token", "class": "text-start"},
             {"text": "更新时间", "class": "text-start"},
-            {"text": "操作", "class": "text-start"},
+            {"text": "操作", "class": "text-start pe-4"},
         ]
         header_row = {
             "component": "thead",
@@ -719,17 +775,21 @@ class MoviePilotAppPush(_PluginBase):
                     "component": "tr",
                     "props": {"class": "text-sm"},
                     "content": [
-                        {"component": "td", "text": username},
+                        {"component": "td", "props": {"class": "ps-4"}, "text": username},
                         {"component": "td", "text": device.get("platform") or "—"},
                         {"component": "td", "text": device.get("bundle_id") or "—"},
                         {
                             "component": "td",
-                            "props": {"class": "font-mono text-caption", "style": "word-break: break-all; max-width: 360px;"},
+                            "props": {
+                                "class": "font-mono text-caption py-3",
+                                "style": "word-break: break-all; max-width: 420px;",
+                            },
                             "text": token,
                         },
                         {"component": "td", "text": device.get("updated_at") or "—"},
                         {
                             "component": "td",
+                            "props": {"class": "pe-4"},
                             "content": [{
                                 "component": "VBtn",
                                 "props": {
@@ -749,33 +809,37 @@ class MoviePilotAppPush(_PluginBase):
                     ],
                 })
 
-        page.append({
-            "component": "VCol",
-            "props": {"cols": 12},
-            "content": [{
-                "component": "VCard",
-                "content": [
-                    {"component": "VCardTitle", "text": "已注册设备"},
-                    {
-                        "component": "VCardText",
-                        "content": [{
-                            "component": "VTable",
-                            "props": {"hover": True, "density": "comfortable"},
-                            "content": [
-                                header_row,
-                                {"component": "tbody", "content": table_rows},
-                            ],
-                        }],
-                    },
-                ],
-            }],
+        sections.append({
+            "component": "VCard",
+            "props": {"variant": "flat", "class": "border-thin"},
+            "content": [
+                {
+                    "component": "VCardTitle",
+                    "props": {"class": "text-subtitle-1 font-weight-medium pt-4 pb-2 px-4"},
+                    "text": "已注册设备",
+                },
+                {
+                    "component": "VCardText",
+                    "props": {"class": "pt-0 pb-4 px-2"},
+                    "content": [{
+                        "component": "VTable",
+                        "props": {"hover": True, "density": "comfortable"},
+                        "content": [
+                            header_row,
+                            {"component": "tbody", "content": table_rows},
+                        ],
+                    }],
+                },
+            ],
         })
 
-        page.append({
+        sections.append({
             "component": "VAlert",
             "props": {
                 "type": "info",
                 "variant": "tonal",
+                "density": "comfortable",
+                "class": "mb-1",
                 "text": (
                     "点击「测试推送」将向对应设备发送默认测试通知。"
                     "请确认 APNs 沙盒/生产环境与 App 构建类型一致。"
@@ -783,7 +847,7 @@ class MoviePilotAppPush(_PluginBase):
             },
         })
 
-        return [{"component": "VRow", "content": [{"component": "VCol", "props": {"cols": 12}, "content": page}]}]
+        return self._wrap_detail_page(sections)
 
     def _detail_apns_status_text(self) -> str:
         if not self._enabled:

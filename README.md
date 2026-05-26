@@ -89,4 +89,4 @@ PLUGIN_LOCAL_REPO_PATHS=/path/to/MoviePilotAppPush
 | POST | `/api/v1/plugin/MoviePilotAppPush/register` | App 登录后注册 token |
 | DELETE | `/api/v1/plugin/MoviePilotAppPush/unregister` | App 登出注销 token |
 | GET | `/api/v1/plugin/MoviePilotAppPush/devices` | 当前用户已注册设备（脱敏） |
-| GET/POST | `/api/v1/plugin/MoviePilotAppPush/test_push` | 测试推送（需 `apikey`） |
+| GET/POST | `/api/v1/plugin/MoviePilotAppPush/test_push` | 测试推送（管理员 Bearer） |
