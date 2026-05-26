@@ -24,7 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import schemas
 from app.db import get_async_db
 from app.db.models import User
-from app.db.user_oper import get_current_active_user_async
+from app.db.user_oper import (
+    get_current_active_superuser_async,
+    get_current_active_user_async,
+)
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import Notification
@@ -52,7 +55,7 @@ class DeviceUnregisterRequest(BaseModel):
 class MoviePilotAppPush(_PluginBase):
     plugin_name = "MoviePilot App 推送"
     plugin_desc = "为 MoviePilot iOS / macOS App 提供 APNs 远程推送"
-    plugin_version = "1.1.1"
+    plugin_version = "1.1.2"
     plugin_author = "MoviePilotApp"
     # 与 package.v2.json 的 icon 一致；独立仓库须用 raw.githubusercontent.com 完整 URL
     plugin_icon = "https://raw.githubusercontent.com/buzhengg/MoviePilotAppPush/main/icons/moviepilotapppush.png"
